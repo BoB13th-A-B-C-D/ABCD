@@ -7,12 +7,16 @@
 5. 파일 - 윈도우 타임라인 파일, Activitycache.db
 10/30 (수) 까지 완료
 """
+import datetime
+import os
+import sqlite3
+import xml.etree.ElementTree as ET
 
 import pandas as pd
 from Registry import Registry
-import sqlite3
-from datetime import datetime
-import os
+import win32evtlog
+import win32evtlogutil
+
 
 def csv_to_db(filename: str):
     """
@@ -75,9 +79,151 @@ def csv_to_db(filename: str):
     print(f"{filename}의 데이터를 데이터베이스에 성공적으로 삽입했습니다.")
 
 
-def evtx_to_db():
-    #
-    pass
+
+def evtx_to_db_Diagnostic(evtx_path):
+    # SQLite 데이터베이스 및 테이블 초기화
+    db_path = "events.db"
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # 테이블 생성 (이벤트 ID, 생성 시간, 연결 상태를 저장)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS event_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER,
+            time_generated TEXT,
+            connection_status TEXT
+        )
+    ''')
+
+    # 이벤트 로그 파일 핸들을 백업 로그에서 엽니다
+    event_log = win32evtlog.OpenBackupEventLog(None, evtx_path)
+    
+    try:
+        # 특정 이벤트 ID 설정
+        target_event_id = 1006
+        flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+        
+        # 모든 이벤트를 읽기 위해 반복
+        while True:
+            events = win32evtlog.ReadEventLog(event_log, flags, 0)
+            if not events:
+                break  # 더 이상 이벤트가 없으면 루프 종료
+            
+            # 각 이벤트 검사 및 필터링
+            for event in events:
+                if event.EventID == target_event_id:
+                    # StringInserts의 특정 인덱스에 있는 값을 UserRemovalPolicy로 간주
+                    message_data = event.StringInserts
+                    
+                    connection_status = None
+                    if message_data and len(message_data) > 3:
+                        user_removal_policy = message_data[3].lower()
+                        connection_status = 'Disconnected' if user_removal_policy == 'true' else 'Connected'
+                       
+                    # 연결 상태가 있으면 데이터베이스에 저장
+                    if connection_status:
+                        event_id = event.EventID
+                        time_generated = event.TimeGenerated.strftime('%Y-%m-%d %H:%M:%S')
+                        
+                        cursor.execute('''
+                            INSERT INTO event_log (event_id, time_generated, connection_status)
+                            VALUES (?, ?, ?)
+                        ''', (event_id, time_generated, connection_status))
+                       
+        
+        # 변경사항 저장
+        conn.commit()
+        print(f"이벤트 로그가 '{db_path}' 데이터베이스에 저장되었습니다.")
+
+    finally:
+        # 데이터베이스 및 이벤트 로그 핸들 닫기
+        win32evtlog.CloseEventLog(event_log)
+        conn.close()
+
+
+def evtx_to_db_PrintService(evtx_path):
+    # SQLite 데이터베이스 및 테이블 초기화
+    db_path = "driver_events.db"  # 별도의 데이터베이스 파일 사용
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # 테이블 생성 (이벤트 ID, 생성 시간, 상태, 추가 필드를 저장)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS driver_event_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER,
+            time_generated TEXT,
+            status TEXT,
+            user TEXT,
+            desktop TEXT,
+            printer TEXT,
+            port TEXT,
+            size INTEGER,
+            page INTEGER
+        )
+    ''')
+
+    # 이벤트 로그 파일 핸들을 백업 로그에서 엽니다
+    event_log = win32evtlog.OpenBackupEventLog(None, evtx_path)
+    
+    try:
+        # 관심 있는 이벤트 ID 목록과 상태 매핑 (842 제외)
+        event_status_mapping = {
+            801: "Printing",
+            802: "Deleted",
+            307: "Completed",
+            8421: "Network Connected",
+            603: "Error"
+        }
+        
+        flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+        
+        # 모든 이벤트를 읽기 위해 반복
+        while True:
+            events = win32evtlog.ReadEventLog(event_log, flags, 0)
+            if not events:
+                break  # 더 이상 이벤트가 없으면 루프 종료
+            
+            # 각 이벤트 검사 및 필터링
+            for event in events:
+                if event.EventID in event_status_mapping:
+                    # 이벤트 ID와 생성 시간, 상태 가져오기
+                    event_id = event.EventID
+                    time_generated = event.TimeGenerated.strftime('%Y-%m-%d %H:%M:%S')
+                    status = event_status_mapping[event_id]
+
+                    # 307 이벤트의 경우 StringInserts에서 추가 정보 추출
+                    user = desktop = printer = port = None
+                    size = page = None
+                    if event_id == 307:
+                        # StringInserts에서 직접 값 추출
+                        message_data = event.StringInserts
+                        if message_data and len(message_data) >= 8:
+                            user = message_data[2]
+                            desktop = message_data[3]
+                            printer = message_data[4]
+                            port = message_data[5]
+                            size = int(message_data[6])
+                            page = int(message_data[7])
+                            
+                    # 데이터베이스에 삽입
+                    cursor.execute('''
+                        INSERT INTO driver_event_log (
+                            event_id, time_generated, status, user, desktop, printer, port, size, page
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (event_id, time_generated, status, user, desktop, printer, port, size, page))
+            
+        # 변경사항 저장
+        conn.commit()
+        print(f"드라이버 이벤트 로그가 '{db_path}' 데이터베이스에 저장되었습니다.")
+
+    finally:
+        # 데이터베이스 및 이벤트 로그 핸들 닫기
+        win32evtlog.CloseEventLog(event_log)
+        conn.close()
+
+
 
 def reg_to_db():
     """Registry files to SQLite database converter"""
