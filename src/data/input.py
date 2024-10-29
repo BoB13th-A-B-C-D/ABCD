@@ -7,13 +7,15 @@
 5. 파일 - 윈도우 타임라인 파일, Activitycache.db
 10/30 (수) 까지 완료
 """
-import win32evtlog
-import win32evtlogutil
+import datetime
+import os
 import sqlite3
 import xml.etree.ElementTree as ET
-import datetime
-#import pandas as pd
-import sqlite3
+
+import pandas as pd
+from Registry import Registry
+import win32evtlog
+import win32evtlogutil
 
 
 def csv_to_db(filename: str):
@@ -224,7 +226,234 @@ def evtx_to_db_PrintService(evtx_path):
 
 
 def reg_to_db():
-    #
+    """Registry files to SQLite database converter"""
+    print("\n=== Registry to Database Converter ===")
+    print("\n=== Registry Path Input ===")
+    print("Please enter the path to the registry files directory.")
+    
+    path = input("\nRegistry path: ").strip()
+    
+    if path.lower() == 'q':
+        print("Registry analysis skipped.")
+        return
+        
+    # 경로 검증
+    if not os.path.exists(path):
+        print("\nError: Path does not exist!")
+        return
+        
+    # SOFTWARE 파일 존재 확인
+    software_path = os.path.join(path, "SOFTWARE")
+    if not os.path.exists(software_path):
+        print("\nError: SOFTWARE registry hive not found in the specified path!")
+        return
+    
+    try:
+        print(f"\nAnalyzing registry files from: {path}")
+        analyzer = OfflinePrinterAnalyzer(path)
+        
+        print("\nAnalyzing offline registry files...")
+        analyzer.update_database()
+        
+        print("\nDisplaying saved printer information...")
+        analyzer.display_printer_info()
+        
+        print("\nRegistry analysis completed.")
+        
+    except Exception as e:
+        print(f"\nError during registry analysis: {str(e)}")
+        
+# 지원 클래스 정의
+class OfflinePrinterAnalyzer:
+    def __init__(self, registry_path, db_path="printer_info.db"):
+        """Initialize offline registry analyzer"""
+        self.registry_path = registry_path
+        self.db_path = db_path
+        
+        # 데이터베이스 파일이 존재하면 삭제
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+            
+        self.create_database()
+    
+    def create_database(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS printers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                printer_name TEXT,
+                port TEXT,
+                driver TEXT,
+                print_processor TEXT,
+                registry_path TEXT,
+                is_default INTEGER DEFAULT 0,
+                default_printer_data TEXT,
+                collection_time TIMESTAMP,
+                case_path TEXT
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+    
+    def parse_installed_printers(self):
+        software_path = os.path.join(self.registry_path, "SOFTWARE")
+        printers = []
+        
+        try:
+            registry = Registry.Registry(software_path)
+            try:
+                key_path = "Microsoft\\Windows NT\\CurrentVersion\\Print\\Printers"
+                printers_key = registry.open(key_path)
+                
+                for subkey in printers_key.subkeys():
+                    printer_info = {
+                        'printer_name': subkey.name(),
+                        'port': '',
+                        'driver': '',
+                        'print_processor': '',
+                        'registry_path': software_path
+                    }
+                    
+                    for value in subkey.values():
+                        if value.name() == "Port":
+                            printer_info['port'] = value.value()
+                        elif value.name() == "Printer Driver":
+                            printer_info['driver'] = value.value()
+                        elif value.name() == "Print Processor":
+                            printer_info['print_processor'] = value.value()
+                    
+                    printers.append(printer_info)
+                print(f"Found {len(printers)} printers in registry")
+                    
+            except Registry.RegistryKeyNotFoundException:
+                print(f"Printers key not found in SOFTWARE hive at {software_path}")
+                
+        except Exception as e:
+            print(f"Error accessing SOFTWARE hive: {str(e)}")
+            
+        return printers
+    
+    def parse_default_printer(self):
+        """Parse default printer settings from SOFTWARE hive"""
+        software_path = os.path.join(self.registry_path, "SOFTWARE")
+        default_printers = {}
+        
+        try:
+            registry = Registry.Registry(software_path)
+            try:
+                possible_paths = [
+                    "Microsoft\\Windows NT\\CurrentVersion\\Windows\\Devices",
+                    "Microsoft\\Windows NT\\CurrentVersion\\Devices",
+                    "Microsoft\\Windows NT\\CurrentVersion\\PrinterPorts"
+                ]
+                
+                for path in possible_paths:
+                    try:
+                        devices_key = registry.open(path)
+                        print(f"Found printer settings in: {path}")
+                        
+                        for value in devices_key.values():
+                            printer_name = value.name()
+                            printer_data = value.value()
+                            default_printers[printer_name] = printer_data
+                            print(f"Found printer: {printer_name} = {printer_data}")
+                        
+                        if default_printers:
+                            break
+                            
+                    except Registry.RegistryKeyNotFoundException:
+                        continue
+                
+                if not default_printers:
+                    print("No printer settings found in any expected registry paths")
+                    
+            except Registry.RegistryKeyNotFoundException:
+                print(f"No printer settings found in SOFTWARE hive at {software_path}")
+                
+        except Exception as e:
+            print(f"Error accessing SOFTWARE hive for default printer: {str(e)}")
+            
+        return default_printers
+    
+    def update_database(self):
+        """Update database with parsed printer information"""
+        current_time = datetime.now().isoformat()
+        
+        installed_printers = self.parse_installed_printers()
+        default_printers = self.parse_default_printer()
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        for printer in installed_printers:
+            is_default = 0
+            default_printer_data = ""
+            
+            if printer['printer_name'] in default_printers:
+                is_default = 1
+                default_printer_data = default_printers[printer['printer_name']]
+            
+            cursor.execute('''
+                INSERT INTO printers 
+                (printer_name, port, driver, print_processor, registry_path,
+                 is_default, default_printer_data, collection_time, case_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                printer['printer_name'],
+                printer['port'],
+                printer['driver'],
+                printer['print_processor'],
+                printer['registry_path'],
+                is_default,
+                default_printer_data,
+                current_time,
+                self.registry_path
+            ))
+        
+        conn.commit()
+        conn.close()
+    
+    def display_printer_info(self):
+        """Display printer information from database"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT printer_name, port, driver, print_processor, is_default, 
+                   default_printer_data, collection_time 
+            FROM printers 
+            WHERE case_path = ?
+            ORDER BY is_default DESC, printer_name
+        ''', (self.registry_path,))
+        
+        rows = cursor.fetchall()
+        
+        print(f"\n=== Printer Information from Registry ===")
+        print(f"Registry Path: {self.registry_path}")
+        print("-" * 50)
+        
+        if not rows:
+            print("No printer information found in database.")
+            return
+            
+        for row in rows:
+            print(f"Printer Name: {row[0]}")
+            print(f"Port: {row[1]}")
+            print(f"Driver: {row[2]}")
+            print(f"Print Processor: {row[3]}")
+            print(f"Default Printer: {'Yes' if row[4] else 'No'}")
+            if row[4]:
+                print(f"Default Printer Data: {row[5]}")
+            print(f"Collection Time: {row[6]}")
+            print("-" * 50)
+        
+        conn.close()
+
+if __name__ == "__main__":
+    reg_to_db()
     pass
 
 def spl_to_db():
