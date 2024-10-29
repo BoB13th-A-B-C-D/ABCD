@@ -78,7 +78,7 @@ def csv_to_db(filename: str):
 
 
 
-def evtx_to_db1(evtx_path):
+def evtx_to_db_Diagnostic(evtx_path):
     # SQLite 데이터베이스 및 테이블 초기화
     db_path = "events.db"
     conn = sqlite3.connect(db_path)
@@ -140,7 +140,7 @@ def evtx_to_db1(evtx_path):
         conn.close()
 
 
-def evtx_to_db2(evtx_path):
+def evtx_to_db_PrintService(evtx_path):
     # SQLite 데이터베이스 및 테이블 초기화
     db_path = "driver_events.db"  # 별도의 데이터베이스 파일 사용
     conn = sqlite3.connect(db_path)
