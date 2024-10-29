@@ -9,7 +9,10 @@
 """
 
 import pandas as pd
+from Registry import Registry
 import sqlite3
+from datetime import datetime
+import os
 
 def csv_to_db(filename: str):
     """
