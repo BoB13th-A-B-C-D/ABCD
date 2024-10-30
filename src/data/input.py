@@ -746,7 +746,7 @@ def insert_record(conn, creation_time, notify_name, document_name, printer_name)
     except Exception as e:
         print(f"Error inserting record into database: {str(e)}")
 
-def main():
+def shd_to_db(path: str):
     print("=== SHD File Analyzer ===")
     path = input("\nEnter path to SHD file or directory: ").strip()
     
@@ -793,3 +793,12 @@ def main():
             print("No SHD files found in the specified directory.")
 
     conn.close()  # 데이터베이스 연결 종료
+
+csv_to_db(r'C:\Users\soke0\Desktop\DFAS')
+evtx = r'D:\DFAS_PRO_X64_1.3.0.5_004\DFASPro\Evidence\CASE_202410291429\CollectSourceFile\20241029143259\Partition3\Windows\System32\winevt\Logs'
+evtx_to_db_Diagnostic(evtx + '\\' + 'Microsoft-Windows-Partition%4Diagnostic.evtx')
+evtx_to_db_PrintService(evtx + '\\' + 'Microsoft-Windows-PrintService%4Operational.evtx')
+reg = r'D:\DFAS_PRO_X64_1.3.0.5_004\DFASPro\Evidence\CASE_202410291429\CollectSourceFile\20241029143259\Partition3\Windows\System32\config'
+reg_to_db(reg)
+shd = r"C:\Users\soke0\Desktop\00004.SHD"
+shd_to_db(shd)
