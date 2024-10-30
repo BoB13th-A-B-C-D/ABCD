@@ -19,6 +19,9 @@ from Registry import Registry
 import win32evtlog
 import win32evtlogutil
 
+import struct
+from datetime import datetime
+
 
 # 딕셔너리 정의
 file_columns = {
@@ -441,14 +444,139 @@ class OfflinePrinterAnalyzer:
         
         conn.close()
 
+
+def spl_to_db(data, offset):
+    """UTF-16LE 문자열 읽기"""
+    if offset == 0 or offset >= len(data):
+        return None
+    try:
+        end = offset
+        while end + 1 < len(data):
+            if data[end:end+2] == b'\x00\x00':
+                break
+            end += 2
+        if end > offset:
+            return data[offset:end].decode('utf-16le').strip()
+    except Exception as e:
+        print(f"Error reading UTF-16 string: {str(e)}")
+    return None
+
+def parse_shd(file_path):
+    try:
+        with open(file_path, 'rb') as f:
+            data = f.read()
+
+        # 기본 헤더 정보
+        signature = struct.unpack('>I', data[0:4])[0]  # big-endian으로 읽기
+        header_size = struct.unpack('<I', data[4:8])[0]  # little-endian
+        status = struct.unpack('<H', data[8:10])[0]
+        job_id = struct.unpack('<I', data[12:16])[0]
+        priority = struct.unpack('<I', data[16:20])[0]
+
+        # 오프셋 읽기 (각 4바이트)
+        username_offset = struct.unpack('<I', data[20:24])[0]
+        notify_name_offset = struct.unpack('<I', data[24:28])[0]
+        document_name_offset = struct.unpack('<I', data[40:44])[0]
+        printer_name_offset = struct.unpack('<I', data[56:60])[0]
+
+        # 문자열 데이터 읽기
+        result = {
+            'file_name': os.path.basename(file_path),
+            'creation_time': datetime.fromtimestamp(os.path.getctime(file_path)),  # 파일 생성 시간
+            'signature': hex(signature),
+            'header_size': header_size,
+            'status': hex(status),
+            'job_id': job_id,
+            'priority': priority,
+            'strings': {
+                'user_name': spl_to_db(data, username_offset),
+                'notify_name': spl_to_db(data, notify_name_offset),
+                'document_name': spl_to_db(data, document_name_offset),
+                'printer_name': spl_to_db(data, printer_name_offset),
+            }
+        }
+
+        return result
+
+    except Exception as e:
+        print(f"Error parsing SHD file {os.path.basename(file_path)}: {str(e)}")
+        return None
+
+def initialize_db(db_path):
+    """SQLite 데이터베이스 초기화 및 테이블 생성"""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            creation_time TEXT,
+            notify_name TEXT,
+            document_name TEXT,
+            printer_name TEXT
+        )
+    ''')
+    conn.commit()
+    return conn
+
+def insert_record(conn, creation_time, notify_name, document_name, printer_name):
+    """데이터베이스에 기록 추가"""
+    cursor = conn.cursor()
+    try:
+        cursor.execute('''
+            INSERT INTO documents (creation_time, notify_name, document_name, printer_name)
+            VALUES (?, ?, ?, ?)
+        ''', (creation_time, notify_name, document_name, printer_name))
+        conn.commit()
+    except Exception as e:
+        print(f"Error inserting record into database: {str(e)}")
+
+def main():
+    print("=== SHD File Analyzer ===")
+    path = input("\nEnter path to SHD file or directory: ").strip()
+    
+    if not os.path.exists(path):
+        print("Error: Path does not exist!")
+        return
+
+    db_path = 'shd_documents.db'  # SQLite 데이터베이스 파일 경로
+    conn = initialize_db(db_path)  # 데이터베이스 초기화
+
+    def analyze_file(file_path):
+        print(f"\nAnalyzing: {os.path.basename(file_path)}")
+        result = parse_shd(file_path)
+        if result:
+            strings = result['strings']
+            creation_time = result['creation_time'].isoformat()  # ISO 포맷으로 변환
+            print("\nDocument Information:")
+            print(f"File Name: {result['file_name']}")
+            print(f"Creation Time: {creation_time}")
+            if strings['notify_name']:
+                print(f"NOTIFY Name: {strings['notify_name']}")
+            if strings['document_name']:
+                print(f"DOCUMENT Name: {strings['document_name']}")
+            if strings['printer_name']:
+                print(f"Printer Name: {strings['printer_name']}")
+
+            # 데이터베이스에 기록 추가
+            insert_record(conn, creation_time, strings['notify_name'], strings['document_name'], strings['printer_name'])
+
+    if os.path.isfile(path):
+        if path.lower().endswith('.shd'):
+            analyze_file(path)
+        else:
+            print("Not a SHD file!")
+    else:
+        found_files = False
+        for root, _, files in os.walk(path):
+            for file in files:
+                if file.lower().endswith('.shd'):
+                    found_files = True
+                    analyze_file(os.path.join(root, file))
+        
+        if not found_files:
+            print("No SHD files found in the specified directory.")
+
+    conn.close()  # 데이터베이스 연결 종료
+
 if __name__ == "__main__":
-    reg_to_db()
-    pass
-
-def spl_to_db():
-    #
-    pass
-
-def activitycache_to_db():
-    #
-    pass
+    main()
