@@ -3,79 +3,297 @@
 # 1. 경로 - DFAS의 일괄 추출의 결과물인, *.csv
 # 2. 경로 - 이벤트로그들 *.evtx
 # 3. 경로 - 레지스트리 하이브 파일들
-4. 경로 - 인쇄 관련 파일, *spl, *.shd
+# 4. 경로 - 인쇄 관련 파일, *spl, *.shd
 10/30 (수) 까지 완료
 """
 import datetime
+import glob
 import os
 import sqlite3
+import struct
 import xml.etree.ElementTree as ET
-
 import pandas as pd
-import sqlite3
-import os
-
-from Registry import Registry
 import win32evtlog
 import win32evtlogutil
-
-import struct
 from datetime import datetime
+from Registry import Registry
 
+db_name = 'database.db'
 
-# 딕셔너리 정의
+# 딕셔너리 정의 (한글 파일명/컬럼명을 영어 테이블명/컬럼명으로 매핑)
 file_columns = {
-    '프로그램_설치_프로그램.csv': ['프로그램명', '게시자', '설치된 시간', '설치경로'],
-    '프로그램_실행_프로그램.csv': ['최종 실행시간', '프로그램명', '실행횟수', '사용자'],
-    '파일_파일_폴더_접근.csv': ['열어본 시간', '파일명', '경로', '볼륨명', '열어본프로그램', '볼륨 S/N', '사용자명'],
-    '파일_폴더_접근_link_파일_정보.csv': ['구분', '파일명', '경로', '크기', '생성시간', '수정시간', '접근시간', '대상 파일 생성시간', '대상 파일 수정시간', '대상 파일 접근시간', '볼륨 S/N', '사용자명'],
-    '파일_점프리스트.csv': ['파일명', '경로', '링크이름', '프로그램', '생성시간', '수정시간', '접근시간', 'Entry CreationTime', 'Entry LastModified', '볼륨 S/N', '원본 파일명', '사용자명'],
-    '파일_최근열람정보.csv': ['파일명', '경로', '유형'],
-    '파일_휴지통.csv': ['삭제시간', '파일/폴더명', '경로', '볼륨', '크기', '사용자명'],
-    '파일_shell_bag_mru정보.csv': ['방문시간', '폴더유형', '폴더', '유형', '생성시간', '수정시간', '접근시간', '사용자명'],
-    '파일_시스템_볼륨_변경_이벤트($usnjrnl).csv': ['시간', 'USN', '파일명', '경로', '이벤트'],
-    '파일_시스템_검색_및_색인_정보.csv': ['시간', '유형', '제목'],
-    'activitiescache_정보_activity_정보.csv': ['마지막 수정 시간', '앱 ID', '앱 디스플레이명', '디스플레이 텍스트', '설명', '시작 시간', '종료 시간', '만료 시간'],
-    '장치_시스템_on_off.csv': ['구분', '시간', '컴퓨터 이름'],
-    '장치_저장장치_연결이력.csv': ['디바이스 정보', '시리얼넘버', '볼륨/볼륨명', 'Volume GUID', '볼륨 S/N', '최초연결시간 (SetupAPI)', '최초연결시간 (Registry)', 
-                         '마지막 연결 시간', '연결 해제 시간', 'USB Stor Key', '디스크명'],
-    '웹_브라우저_방문_웹사이트.csv': ['방문시간', '수집유형', '구분', '방문 사이트명', '세부내역', '제목', '사용자명'],
-    '웹_브라우저_포털_검색어.csv': ['검색시간', '수집유형', '사이트', '구분', '검색어'],
-    '웹_브라우저_웹_다운로드.csv': ['시작시간', '종료시간', '수집유형', '다운로드 파일명', 'URL', '상태', '크기', '사용자명'],
-    '장치_os_정보.csv': ['운영체제', '버전', '빌드', '설치된 시간', '사용자', '표준시간대'],
-    '장치_사용자_계정.csv': ['계정명', '로그인횟수', '비밀번호 여부', '계정 생성시간', '마지막 로그인 시간', '패스워드 변경시간', '마지막 로그인 실패시간'],
+    '프로그램_설치_프로그램.csv': {
+        'table_name': 'installed_programs',
+        'columns': {
+            '프로그램명': 'program_name',
+            '게시자': 'publisher',
+            '설치된 시간': 'installed_time',
+            '설치경로': 'installation_path'
+        }
+    },
+    '프로그램_실행_프로그램.csv': {
+        'table_name': 'program_execution',
+        'columns': {
+            '최종 실행시간': 'last_execution_time',
+            '프로그램명': 'program_name',
+            '실행횟수': 'execution_count',
+            '사용자': 'user'
+        }
+    },
+    '파일_파일_폴더_접근.csv': {
+        'table_name': 'file_folder_access',
+        'columns': {
+            '열어본 시간': 'access_time',
+            '파일명': 'file_name',
+            '경로': 'path',
+            '볼륨명': 'volume_name',
+            '열어본프로그램': 'accessed_program',
+            '볼륨 S/N': 'volume_serial_number',
+            '사용자명': 'user_name'
+        }
+    },
+    '파일_폴더_접근_link_파일_정보.csv': {
+        'table_name': 'folder_link_file_info',
+        'columns': {
+            '구분': 'type',
+            '파일명': 'file_name',
+            '경로': 'path',
+            '크기': 'size',
+            '생성시간': 'creation_time',
+            '수정시간': 'modification_time',
+            '접근시간': 'access_time',
+            '대상 파일 생성시간': 'target_file_creation_time',
+            '대상 파일 수정시간': 'target_file_modification_time',
+            '대상 파일 접근시간': 'target_file_access_time',
+            '볼륨 S/N': 'volume_serial_number',
+            '사용자명': 'user_name'
+        }
+    },
+    '파일_점프리스트.csv': {
+        'table_name': 'file_jumplist',
+        'columns': {
+            '파일명': 'file_name',
+            '경로': 'path',
+            '링크이름': 'link_name',
+            '프로그램': 'program',
+            '생성시간': 'creation_time',
+            '수정시간': 'modification_time',
+            '접근시간': 'access_time',
+            'Entry CreationTime': 'entry_creation_time',
+            'Entry LastModified': 'entry_last_modified',
+            '볼륨 S/N': 'volume_serial_number',
+            '원본 파일명': 'original_file_name',
+            '사용자명': 'user_name'
+        }
+    },
+    '파일_최근열람정보.csv': {
+        'table_name': 'file_recent_view_info',
+        'columns': {
+            '파일명': 'file_name',
+            '경로': 'path',
+            '유형': 'type'
+        }
+    },
+    '파일_휴지통.csv': {
+        'table_name': 'file_recycle_bin',
+        'columns': {
+            '삭제시간': 'deletion_time',
+            '파일/폴더명': 'file_folder_name',
+            '경로': 'path',
+            '볼륨': 'volume',
+            '크기': 'size',
+            '사용자명': 'user_name'
+        }
+    },
+    '파일_shell_bag_mru정보.csv': {
+        'table_name': 'file_shell_bag_mru_info',
+        'columns': {
+            '방문시간': 'visit_time',
+            '폴더유형': 'folder_type',
+            '폴더': 'folder',
+            '유형': 'type',
+            '생성시간': 'creation_time',
+            '수정시간': 'modification_time',
+            '접근시간': 'access_time',
+            '사용자명': 'user_name'
+        }
+    },
+    '파일_시스템_볼륨_변경_이벤트($usnjrnl).csv': {
+        'table_name': 'file_system_volume_change_event',
+        'columns': {
+            '시간': 'time',
+            'USN': 'usn',
+            '파일명': 'file_name',
+            '경로': 'path',
+            '이벤트': 'event'
+        }
+    },
+    '파일_시스템_검색_및_색인_정보.csv': {
+        'table_name': 'file_system_search_index_info',
+        'columns': {
+            '시간': 'time',
+            '유형': 'type',
+            '제목': 'title'
+        }
+    },
+    'activitiescache_정보_activity_정보.csv': {
+        'table_name': 'activities_cache_activity_info',
+        'columns': {
+            '마지막 수정 시간': 'last_modified_time',
+            '앱 ID': 'app_id',
+            '앱 디스플레이명': 'app_display_name',
+            '디스플레이 텍스트': 'display_text',
+            '설명': 'description',
+            '시작 시간': 'start_time',
+            '종료 시간': 'end_time',
+            '만료 시간': 'expiration_time'
+        }
+    },
+    '장치_시스템_on_off.csv': {
+        'table_name': 'device_system_on_off',
+        'columns': {
+            '구분': 'type',
+            '시간': 'time',
+            '컴퓨터 이름': 'computer_name'
+        }
+    },
+    '장치_저장장치_연결이력.csv': {
+        'table_name': 'device_storage_connection_history',
+        'columns': {
+            '디바이스 정보': 'device_info',
+            '시리얼넘버': 'serial_number',
+            '볼륨/볼륨명': 'volume_name',
+            'Volume GUID': 'volume_guid',
+            '볼륨 S/N': 'volume_serial_number',
+            '최초연결시간 (SetupAPI)': 'first_connection_time_setupapi',
+            '최초연결시간 (Registry)': 'first_connection_time_registry',
+            '마지막 연결 시간': 'last_connection_time',
+            '연결 해제 시간': 'disconnection_time',
+            'USB Stor Key': 'usb_stor_key',
+            '디스크명': 'disk_name'
+        }
+    },
+    '웹_브라우저_방문_웹사이트.csv': {
+        'table_name': 'web_browser_visited_websites',
+        'columns': {
+            '방문시간': 'visit_time',
+            '수집유형': 'collection_type',
+            '구분': 'type',
+            '방문 사이트명': 'website_name',
+            '세부내역': 'details',
+            '제목': 'title',
+            '사용자명': 'user_name'
+        }
+    },
+    '웹_브라우저_포털_검색어.csv': {
+        'table_name': 'web_browser_portal_search_terms',
+        'columns': {
+            '검색시간': 'search_time',
+            '수집유형': 'collection_type',
+            '사이트': 'site',
+            '구분': 'type',
+            '검색어': 'search_term'
+        }
+    },
+    '웹_브라우저_웹_다운로드.csv': {
+        'table_name': 'web_browser_web_download',
+        'columns': {
+            '시작시간': 'start_time',
+            '종료시간': 'end_time',
+            '수집유형': 'collection_type',
+            '다운로드 파일명': 'downloaded_file_name',
+            'URL': 'url',
+            '상태': 'status',
+            '크기': 'size',
+            '사용자명': 'user_name'
+        }
+    },
+    '장치_os_정보.csv': {
+        'table_name': 'device_os_info',
+        'columns': {
+            '운영체제': 'operating_system',
+            '버전': 'version',
+            '빌드': 'build',
+            '설치된 시간': 'installation_time',
+            '사용자': 'user',
+            '표준시간대': 'timezone'
+        }
+    },
+    '장치_사용자_계정.csv': {
+        'table_name': 'device_user_account',
+        'columns': {
+            '계정명': 'account_name',
+            '로그인횟수': 'login_count',
+            '비밀번호 여부': 'password_set',
+            '계정 생성시간': 'account_creation_time',
+            '마지막 로그인 시간': 'last_login_time',
+            '패스워드 변경시간': 'password_change_time',
+            '마지막 로그인 실패시간': 'last_login_failure_time'
+        }
+    },
+    '파일리스트_*.csv': {
+        'table_name': 'file_list',
+        'columns': {
+            '파일명': 'file_name',
+            '경로': 'path',
+            '생성시간': 'creation_time',
+            '수정시간': 'modification_time',
+            '접근시간': 'access_time',
+            'MFT수정시간': 'MFT_modification_time',
+            '크기': 'size',
+            '원본확장자': 'original_extension',
+            '변경확장자': 'modified_extension',
+            '삭제': 'deleted',
+            '해시셋': 'hash_set',
+            'MD5': 'MD5',
+            'SHA1': 'SHA1',
+            '해시 태그': 'hash_tag'
+        }
+    }
 }
 
 def csv_to_db(path: str):
     # SQLite 데이터베이스 연결
-    conn = sqlite3.connect('database.db')
+    conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
 
     # 디렉토리 내의 모든 파일 가져오기
     for file_name in os.listdir(path):
-        if file_name in file_columns:  # 딕셔너리 키에 파일 이름이 있는지 확인
+        if file_name in file_columns:
             file_path = os.path.join(path, file_name)
-            columns = file_columns[file_name]  # 필요한 열 가져오기
-            try:
-                df = pd.read_csv(file_path, usecols=columns, encoding='utf-8', sep='\t')
-                # 테이블 이름을 파일 이름에서 .csv 확장자를 제거한 형태로 지정
-                table_name = file_name.replace('.csv', '')
+            table_info = file_columns[file_name]
+            table_name = table_info['table_name']
+            columns_map = table_info['columns']
 
-                # 데이터베이스에 테이블로 저장
+            try:
+                df = pd.read_csv(file_path, usecols=columns_map.keys(), encoding='utf-8', sep='\t')
+                df.rename(columns=columns_map, inplace=True)
                 df.to_sql(table_name, conn, if_exists='replace', index=False)
-                #print(f"{table_name} 테이블이 생성되었습니다.")
+                print(f"{table_name} 테이블이 생성되었습니다.")
             except Exception as e:
                 print(f"{file_name} 파일을 읽는 중 오류 발생: {e}")
 
-    # 데이터베이스 연결 종료
+    # '파일리스트_'로 시작하는 파일들을 glob 패턴을 통해 가져오기
+    for file_path in glob.glob(os.path.join(path, '파일리스트_*.csv')):
+        table_info = file_columns['파일리스트_*.csv']
+        table_name = table_info['table_name']
+        columns_map = table_info['columns']
+
+        try:
+            df = pd.read_csv(file_path, usecols=columns_map.keys(), encoding='utf-8', sep='\t')
+            df.rename(columns=columns_map, inplace=True)
+            df.to_sql(table_name, conn, if_exists='replace', index=False)
+            print(f"{table_name} 테이블이 생성되었습니다.")
+        except Exception as e:
+            print(f"{file_path} 파일을 읽는 중 오류 발생: {e}")
+
     conn.close()
     print("모든 파일이 처리되었습니다.")
 
 
 def evtx_to_db_Diagnostic(evtx_path):
     # SQLite 데이터베이스 및 테이블 초기화
-    db_path = "events.db"
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
     
     # 테이블 생성 (이벤트 ID, 생성 시간, 연결 상태를 저장)
@@ -126,7 +344,7 @@ def evtx_to_db_Diagnostic(evtx_path):
         
         # 변경사항 저장
         conn.commit()
-        print(f"이벤트 로그가 '{db_path}' 데이터베이스에 저장되었습니다.")
+        print(f"이벤트 로그가 '{db_name}' 데이터베이스에 저장되었습니다.")
 
     finally:
         # 데이터베이스 및 이벤트 로그 핸들 닫기
@@ -136,8 +354,7 @@ def evtx_to_db_Diagnostic(evtx_path):
 
 def evtx_to_db_PrintService(evtx_path):
     # SQLite 데이터베이스 및 테이블 초기화
-    db_path = "driver_events.db"  # 별도의 데이터베이스 파일 사용
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
     
     # 테이블 생성 (이벤트 ID, 생성 시간, 상태, 추가 필드를 저장)
@@ -208,13 +425,12 @@ def evtx_to_db_PrintService(evtx_path):
             
         # 변경사항 저장
         conn.commit()
-        print(f"드라이버 이벤트 로그가 '{db_path}' 데이터베이스에 저장되었습니다.")
+        print(f"드라이버 이벤트 로그가 '{db_name}' 데이터베이스에 저장되었습니다.")
 
     finally:
         # 데이터베이스 및 이벤트 로그 핸들 닫기
         win32evtlog.CloseEventLog(event_log)
         conn.close()
-
 
 
 def reg_to_db():
@@ -257,7 +473,7 @@ def reg_to_db():
         
 # 지원 클래스 정의
 class OfflinePrinterAnalyzer:
-    def __init__(self, registry_path, db_path="printer_info.db"):
+    def __init__(self, registry_path, db_path=db_name):
         """Initialize offline registry analyzer"""
         self.registry_path = registry_path
         self.db_path = db_path
@@ -502,9 +718,9 @@ def parse_shd(file_path):
         print(f"Error parsing SHD file {os.path.basename(file_path)}: {str(e)}")
         return None
 
-def initialize_db(db_path):
+def initialize_db(db_name):
     """SQLite 데이터베이스 초기화 및 테이블 생성"""
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS documents (
@@ -577,6 +793,3 @@ def main():
             print("No SHD files found in the specified directory.")
 
     conn.close()  # 데이터베이스 연결 종료
-
-if __name__ == "__main__":
-    main()
