@@ -3,25 +3,19 @@
 # 1. 경로 - DFAS의 일괄 추출의 결과물인, *.csv
 # 2. 경로 - 이벤트로그들 *.evtx
 # 3. 경로 - 레지스트리 하이브 파일들
-4. 경로 - 인쇄 관련 파일, *spl, *.shd
+# 4. 경로 - 인쇄 관련 파일, *spl, *.shd
 10/30 (수) 까지 완료
 """
 import datetime
 import os
 import sqlite3
+import struct
 import xml.etree.ElementTree as ET
-
 import pandas as pd
-import sqlite3
-import os
-
-from Registry import Registry
 import win32evtlog
 import win32evtlogutil
-
-import struct
 from datetime import datetime
-
+from Registry import Registry
 
 # 딕셔너리 정의
 file_columns = {
@@ -44,6 +38,7 @@ file_columns = {
     '웹_브라우저_웹_다운로드.csv': ['시작시간', '종료시간', '수집유형', '다운로드 파일명', 'URL', '상태', '크기', '사용자명'],
     '장치_os_정보.csv': ['운영체제', '버전', '빌드', '설치된 시간', '사용자', '표준시간대'],
     '장치_사용자_계정.csv': ['계정명', '로그인횟수', '비밀번호 여부', '계정 생성시간', '마지막 로그인 시간', '패스워드 변경시간', '마지막 로그인 실패시간'],
+    '파일리스트_*.csv': ['파일명', '경로', '생성시간', '수정시간', '접근시간', 'MFT수정시간', '크기', '원본확장자', '변경확장자', '삭제', '해시셋', 'MD5', 'SHA1', '해시 태그']
 }
 
 def csv_to_db(path: str):
@@ -214,7 +209,6 @@ def evtx_to_db_PrintService(evtx_path):
         # 데이터베이스 및 이벤트 로그 핸들 닫기
         win32evtlog.CloseEventLog(event_log)
         conn.close()
-
 
 
 def reg_to_db():
@@ -577,6 +571,3 @@ def main():
             print("No SHD files found in the specified directory.")
 
     conn.close()  # 데이터베이스 연결 종료
-
-if __name__ == "__main__":
-    main()
