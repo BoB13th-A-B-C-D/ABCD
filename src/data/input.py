@@ -18,6 +18,8 @@ import win32evtlogutil
 from datetime import datetime
 from Registry import Registry
 
+db_name = 'database.db'
+
 # 딕셔너리 정의 (한글 파일명/컬럼명을 영어 테이블명/컬럼명으로 매핑)
 file_columns = {
     '프로그램_설치_프로그램.csv': {
@@ -252,7 +254,7 @@ file_columns = {
 
 def csv_to_db(path: str):
     # SQLite 데이터베이스 연결
-    conn = sqlite3.connect('database.db')
+    conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
 
     # 디렉토리 내의 모든 파일 가져오기
@@ -291,8 +293,7 @@ def csv_to_db(path: str):
 
 def evtx_to_db_Diagnostic(evtx_path):
     # SQLite 데이터베이스 및 테이블 초기화
-    db_path = "events.db"
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
     
     # 테이블 생성 (이벤트 ID, 생성 시간, 연결 상태를 저장)
@@ -343,7 +344,7 @@ def evtx_to_db_Diagnostic(evtx_path):
         
         # 변경사항 저장
         conn.commit()
-        print(f"이벤트 로그가 '{db_path}' 데이터베이스에 저장되었습니다.")
+        print(f"이벤트 로그가 '{db_name}' 데이터베이스에 저장되었습니다.")
 
     finally:
         # 데이터베이스 및 이벤트 로그 핸들 닫기
@@ -353,8 +354,7 @@ def evtx_to_db_Diagnostic(evtx_path):
 
 def evtx_to_db_PrintService(evtx_path):
     # SQLite 데이터베이스 및 테이블 초기화
-    db_path = "driver_events.db"  # 별도의 데이터베이스 파일 사용
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
     
     # 테이블 생성 (이벤트 ID, 생성 시간, 상태, 추가 필드를 저장)
@@ -425,7 +425,7 @@ def evtx_to_db_PrintService(evtx_path):
             
         # 변경사항 저장
         conn.commit()
-        print(f"드라이버 이벤트 로그가 '{db_path}' 데이터베이스에 저장되었습니다.")
+        print(f"드라이버 이벤트 로그가 '{db_name}' 데이터베이스에 저장되었습니다.")
 
     finally:
         # 데이터베이스 및 이벤트 로그 핸들 닫기
@@ -473,7 +473,7 @@ def reg_to_db():
         
 # 지원 클래스 정의
 class OfflinePrinterAnalyzer:
-    def __init__(self, registry_path, db_path="printer_info.db"):
+    def __init__(self, registry_path, db_path=db_name):
         """Initialize offline registry analyzer"""
         self.registry_path = registry_path
         self.db_path = db_path
@@ -718,9 +718,9 @@ def parse_shd(file_path):
         print(f"Error parsing SHD file {os.path.basename(file_path)}: {str(e)}")
         return None
 
-def initialize_db(db_path):
+def initialize_db(db_name):
     """SQLite 데이터베이스 초기화 및 테이블 생성"""
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS documents (
