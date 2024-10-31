@@ -110,13 +110,27 @@ class ForensicParser:
                 }
             },
             '파일_시스템_볼륨_변경_이벤트($usnjrnl).csv': {
-                'table_name': 'file_system_volume_change_event',
+                'table_name': 'file_system_volume_change_usnjrnl',
                 'columns': {
                     '시간': 'time',
                     'USN': 'usn',
                     '파일명': 'file_name',
                     '경로': 'path',
                     '이벤트': 'event'
+                }
+            },
+             '파일_시스템_파일_시스템_변경_이벤트($logfile).csv': {
+                'table_name': 'file_system_volume_change_logfile',
+                'columns': {
+                    '시간': 'time',
+                    '이벤트': 'event',
+                    '파일명': 'file_name',
+                    '경로': 'path',
+                    '생성시간': 'creation_time',
+                    '수정시간': 'modify_time',
+                    'MFT 수정시간': 'M_modify_time',
+                    '접근시간': 'access_time',
+                    '상세정보': 'detail'
                 }
             },
             '파일_시스템_검색_및_색인_정보.csv': {
